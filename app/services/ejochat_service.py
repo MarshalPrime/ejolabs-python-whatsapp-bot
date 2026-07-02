@@ -2,28 +2,41 @@ import os
 import requests
 import logging
 
-def generate_ejochat_response(message_body):
+from app.services.constants import FALLBACK_RESPONSE, looks_like_default_persona
+from app.services.prompt_service import (
+    build_kabisa_system_instruction,
+    build_kabisa_user_prompt,
+)
+
+
+def generate_ejochat_response(message_body, context=None):
     api_key = os.getenv("EJOCHAT_API_KEY") or os.getenv("EjoChat_API_KEY")
     api_url = os.getenv("EJOCHAT_API_URL") or os.getenv("EjoChat_API_URL") or "https://ejolabs.com/api/v1/subiza"
     
     if not api_key:
         logging.error("EJOCHAT_API_KEY / EjoChat_API_KEY is not set in environment.")
-        return "Nta gishya (EjoChat API Key is missing)."
+        return FALLBACK_RESPONSE
 
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
     
+    if not context:
+        return FALLBACK_RESPONSE
+
+    system_message = build_kabisa_system_instruction()
+    user_message = build_kabisa_user_prompt(message_body, context)
+
     payload = {
         "messages": [
             {
                 "role": "system",
-                "content": "You are a helpful WhatsApp assistant. Respond naturally and concisely in Kinyarwanda or English depending on what the user speaks."
+                "content": system_message,
             },
             {
                 "role": "user",
-                "content": message_body
+                "content": user_message,
             }
         ]
     }
@@ -34,7 +47,10 @@ def generate_ejochat_response(message_body):
         response.raise_for_status()
         data = response.json()
         answer = data["choices"][0]["message"]["content"]
+        if looks_like_default_persona(answer):
+            logging.error("EjoChat returned default persona instead of Kabisa answer: %s", answer)
+            return FALLBACK_RESPONSE
         return answer.strip()
     except Exception as e:
         logging.error(f"EjoChat API call failed: {e}")
-        return "Habaye ikibazo mu gusubiza (Error connecting to EjoChat)."
+        return FALLBACK_RESPONSE

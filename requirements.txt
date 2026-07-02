@@ -1,5 +1,7 @@
 flask
 python-dotenv
-openai
 aiohttp
 requests
+beautifulsoup4
+qdrant-client[fastembed]
+google-genai

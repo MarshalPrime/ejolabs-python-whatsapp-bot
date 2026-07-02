@@ -9,9 +9,14 @@ def validate_signature(payload, signature):
     """
     Validate the incoming payload's signature against our expected signature
     """
+    app_secret = current_app.config.get("APP_SECRET")
+    if not app_secret or not signature:
+        logging.error("Cannot validate webhook signature: missing APP_SECRET or signature")
+        return False
+
     # Use the App Secret to hash the payload
     expected_signature = hmac.new(
-        bytes(current_app.config["APP_SECRET"], "latin-1"),
+        bytes(app_secret, "latin-1"),
         msg=payload.encode("utf-8"),
         digestmod=hashlib.sha256,
     ).hexdigest()

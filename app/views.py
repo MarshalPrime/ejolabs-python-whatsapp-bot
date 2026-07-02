@@ -1,5 +1,6 @@
 import logging
 import json
+from threading import Thread
 
 from flask import Blueprint, request, jsonify, current_app
 
@@ -8,8 +9,17 @@ from .utils.whatsapp_utils import (
     process_whatsapp_message,
     is_valid_whatsapp_message,
 )
+from .services.qdrant_service import collection_status
 
 webhook_blueprint = Blueprint("webhook", __name__)
+
+
+def _process_message_async(app, body):
+    with app.app_context():
+        try:
+            process_whatsapp_message(body)
+        except Exception:
+            logging.exception("Failed to process WhatsApp message")
 
 
 def handle_message():
@@ -26,8 +36,7 @@ def handle_message():
     Returns:
         response: A tuple containing a JSON response and an HTTP status code.
     """
-    body = request.get_json()
-    # logging.info(f"request body: {body}")
+    body = request.get_json(silent=True) or {}
 
     # Check if it's a WhatsApp status update
     if (
@@ -41,7 +50,15 @@ def handle_message():
 
     try:
         if is_valid_whatsapp_message(body):
-            process_whatsapp_message(body)
+            if current_app.config.get("WEBHOOK_ASYNC", True):
+                app = current_app._get_current_object()
+                Thread(
+                    target=_process_message_async,
+                    args=(app, body),
+                    daemon=True,
+                ).start()
+            else:
+                process_whatsapp_message(body)
             return jsonify({"status": "ok"}), 200
         else:
             # if the request is not a WhatsApp API event, return an error
@@ -54,7 +71,7 @@ def handle_message():
         return jsonify({"status": "error", "message": "Invalid JSON provided"}), 400
 
 
-# Required webhook verifictaion for WhatsApp
+# Required webhook verification for WhatsApp
 def verify():
     # Parse params from the webhook verification request
     mode = request.args.get("hub.mode")
@@ -87,3 +104,14 @@ def webhook_post():
     return handle_message()
 
 
+@webhook_blueprint.route("/health", methods=["GET"])
+def health():
+    qdrant = collection_status()
+    return jsonify(
+        {
+            "status": "ok",
+            "assistant": "kabisa_whatsapp_rag",
+            "rag_enabled": qdrant["reachable"] and qdrant["points_count"] > 0,
+            "qdrant": qdrant,
+        }
+    ), 200

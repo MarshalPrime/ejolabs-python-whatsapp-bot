@@ -1,4 +1,6 @@
 from flask import Flask
+import logging
+
 from app.config import load_configurations, configure_logging
 from .views import webhook_blueprint
 
@@ -12,5 +14,6 @@ def create_app():
 
     # Import and register blueprints, if any
     app.register_blueprint(webhook_blueprint)
+    logging.info("Kabisa WhatsApp RAG assistant initialized")
 
     return app

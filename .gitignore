@@ -90,3 +90,4 @@ target/
 # Exlcude the database file
 .db
 .venv/
+env-spruik/
