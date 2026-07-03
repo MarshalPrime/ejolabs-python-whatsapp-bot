@@ -27,16 +27,16 @@ KABISA_RESPONSE_LANGUAGE="auto"
 
 `KABISA_RESPONSE_LANGUAGE=auto` tells the model to answer in the user's language, falling back to Kinyarwanda when the language is unclear. Use `kinyarwanda`, `english`, or `french` to force one language.
 
-Start Qdrant:
-
-```bash
-docker compose up -d qdrant
-```
-
 Install dependencies:
 
 ```bash
 pip install -r requirements.txt
+```
+
+Start Qdrant:
+
+```bash
+docker compose up -d qdrant
 ```
 
 Ingest Kabisa Rwanda content:
@@ -51,17 +51,15 @@ Run Flask:
 python run.py
 ```
 
-Run local smoke checks without calling WhatsApp, Qdrant, EjoChat, or Gemini:
-
-```bash
-python scripts/smoke_checks.py
-```
-
 Expose the webhook with ngrok on the same port:
 
 ```bash
 ngrok http 8000 --domain your-domain.ngrok-free.dev
 ```
+
+Access Qdrant:
+- url: http://localhost:6333/dashboard
+- Go to Collections -> kabisa_rw
 
 Meta callback URL:
 
