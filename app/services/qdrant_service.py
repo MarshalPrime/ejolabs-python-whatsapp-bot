@@ -140,6 +140,50 @@ def list_available_vehicles(limit=20):
     return vehicles
 
 
+def list_contact_pages(limit=5):
+    client = _client()
+    if client is None:
+        return []
+
+    try:
+        response = client.scroll(
+            collection_name=current_app.config["QDRANT_COLLECTION"],
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="content_type",
+                        match=models.MatchValue(value="page"),
+                    )
+                ]
+            ),
+            limit=100,
+            with_payload=True,
+            with_vectors=False,
+        )
+    except Exception as exc:
+        logging.error("Qdrant contact page listing failed: %s", exc)
+        return []
+
+    points, _ = response
+    pages = []
+    for point in points:
+        payload = point.payload or {}
+        source_url = payload.get("source_url") or ""
+        title = payload.get("title") or ""
+        searchable = f"{source_url} {title}".lower()
+        if "/contact" not in searchable and "contact" not in searchable:
+            continue
+        pages.append(
+            {
+                "text": payload.get("document", ""),
+                "metadata": payload,
+            }
+        )
+        if len(pages) >= limit:
+            break
+    return pages
+
+
 def list_charging_stations(location=None, limit=12):
     client = _client()
     if client is None:

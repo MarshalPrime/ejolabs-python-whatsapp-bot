@@ -14,6 +14,18 @@ from .services.qdrant_service import collection_status
 webhook_blueprint = Blueprint("webhook", __name__)
 
 
+@webhook_blueprint.route("/", methods=["GET"])
+def index():
+    return jsonify(
+        {
+            "status": "ok",
+            "assistant": "kabisa_whatsapp_rag",
+            "webhook": "/webhook",
+            "health": "/health",
+        }
+    ), 200
+
+
 def _process_message_async(app, body):
     with app.app_context():
         try:
@@ -37,6 +49,11 @@ def handle_message():
         response: A tuple containing a JSON response and an HTTP status code.
     """
     body = request.get_json(silent=True) or {}
+    logging.info(
+        "Webhook event received: object=%s has_entry=%s",
+        body.get("object"),
+        bool(body.get("entry")),
+    )
 
     # Check if it's a WhatsApp status update
     if (
@@ -62,6 +79,7 @@ def handle_message():
             return jsonify({"status": "ok"}), 200
         else:
             # if the request is not a WhatsApp API event, return an error
+            logging.warning("Webhook payload did not match WhatsApp message structure")
             return (
                 jsonify({"status": "error", "message": "Not a WhatsApp API event"}),
                 404,

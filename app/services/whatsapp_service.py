@@ -20,6 +20,12 @@ def _headers():
 
 
 def _send_payload(payload, timeout=10):
+    logging.info(
+        "Sending WhatsApp %s message to %s via %s",
+        payload.get("type"),
+        payload.get("to"),
+        _graph_url(),
+    )
     try:
         response = requests.post(
             _graph_url(), data=json.dumps(payload), headers=_headers(), timeout=timeout
@@ -29,7 +35,15 @@ def _send_payload(payload, timeout=10):
         logging.error("Timeout occurred while sending WhatsApp message")
         return jsonify({"status": "error", "message": "Request timed out"}), 408
     except requests.RequestException as exc:
-        logging.error("WhatsApp send failed: %s", exc)
+        response = getattr(exc, "response", None)
+        if response is not None:
+            logging.error(
+                "WhatsApp send failed: status=%s body=%s",
+                response.status_code,
+                response.text,
+            )
+        else:
+            logging.error("WhatsApp send failed: %s", exc)
         return jsonify({"status": "error", "message": "Failed to send message"}), 500
 
     logging.info("WhatsApp send status=%s body=%s", response.status_code, response.text)

@@ -26,7 +26,8 @@ def build_kabisa_system_instruction():
         "Never introduce yourself as Subiza or Ejo Labs. "
         f"{_language_instruction()}"
         "Use only the provided Kabisa knowledge base context. "
-        f"If the answer is not in the context, reply exactly: {FALLBACK_RESPONSE}"
+        "Format contact details as plain text; do not wrap email addresses, phone numbers, names, or locations in square brackets or Markdown links. "
+        f"If the answer is not in the context, don't imagine or hallucinate, reply exactly: {FALLBACK_RESPONSE}"
     )
 
 
@@ -35,7 +36,8 @@ def build_kabisa_user_prompt(message_body, context):
         "Act as Kabisa's WhatsApp assistant. "
         "Do not greet as Uri Subiza. Do not mention being created by Ejo Labs. "
         "Answer only from the Kabisa knowledge base context below. "
-        f"If the context does not answer the question, reply exactly: {FALLBACK_RESPONSE}\n\n"
+        "When listing contact details, keep email addresses and phone numbers as plain text without square brackets. "
+        f"If the context does not answer the question, don't imagine or hallucinate, reply exactly: {FALLBACK_RESPONSE}\n\n"
         f"KABISA KNOWLEDGE BASE CONTEXT:\n{context}\n\n"
         f"USER QUESTION:\n{message_body}"
     )

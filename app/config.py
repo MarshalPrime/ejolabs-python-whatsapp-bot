@@ -42,6 +42,7 @@ def load_configurations(app):
     app.config["KABISA_API_BASE_URL"] = os.getenv(
         "KABISA_API_BASE_URL", "https://api.gokabisa.com"
     )
+    app.config["KABISA_CONTACT_EMAIL"] = os.getenv("KABISA_CONTACT_EMAIL", "info@gokabisa.com")
     app.config["WEBHOOK_ASYNC"] = os.getenv("WEBHOOK_ASYNC", "true").lower() == "true"
 
     missing = [name for name in REQUIRED_SETTINGS if not app.config.get(name)]

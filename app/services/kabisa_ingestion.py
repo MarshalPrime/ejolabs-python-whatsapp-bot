@@ -26,6 +26,24 @@ def _clean_text(text):
     return " ".join(text.split())
 
 
+def _decode_cloudflare_email(value):
+    try:
+        data = bytes.fromhex(value)
+    except ValueError:
+        return ""
+    if not data:
+        return ""
+    key = data[0]
+    return "".join(chr(byte ^ key) for byte in data[1:])
+
+
+def _restore_protected_emails(soup):
+    for tag in soup.select("[data-cfemail]"):
+        email = _decode_cloudflare_email(tag.get("data-cfemail", ""))
+        if email:
+            tag.string = email
+
+
 def _page_documents():
     base_url = current_app.config["KABISA_SITE_BASE_URL"].rstrip("/")
     documents = []
@@ -36,6 +54,7 @@ def _page_documents():
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
+        _restore_protected_emails(soup)
         for tag in soup(["script", "style", "noscript"]):
             tag.decompose()
 

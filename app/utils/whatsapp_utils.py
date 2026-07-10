@@ -1,9 +1,12 @@
 import logging
 import os
 
+from flask import current_app, has_app_context
+
 from app.services.constants import FALLBACK_RESPONSE, looks_like_default_persona
 from app.services.llm_service import generate_kabisa_response
 from app.services.qdrant_service import (
+    list_contact_pages,
     list_available_vehicles,
     list_charging_stations,
     search_knowledge,
@@ -13,6 +16,7 @@ import re
 
 
 MIN_RETRIEVAL_SCORE = 0.55
+MAX_VEHICLE_CAPTION_LENGTH = 1024
 LAST_IMAGE_BY_USER = {}
 
 
@@ -103,6 +107,12 @@ def process_text_for_whatsapp(text):
     # Substitute the pattern with an empty string
     text = re.sub(pattern, "", text).strip()
 
+    # Keep contact details plain. Some scraped links and LLM responses wrap
+    # emails in square brackets, which looks broken in WhatsApp.
+    text = re.sub(r"\[([^\]\s]+@[^\]\s]+)\]", r"\1", text)
+    text = re.sub(r"\[([^\]]*(?:email|e-mail)[^\]]*)\]", r"\1", text, flags=re.IGNORECASE)
+    text = text.replace("\u2060", "").replace("\ufeff", "")
+
     # Pattern to find double asterisks including the word(s) in between
     pattern = r"\*\*(.*?)\*\*"
 
@@ -189,6 +199,87 @@ def _format_context(results):
     return "\n\n".join(chunks)
 
 
+def _asks_contact_details(message_body):
+    compact = message_body.lower()
+    contact_terms = (
+        "email",
+        "e-mail",
+        "mail address",
+        "contact",
+        "phone number",
+        "call you",
+        "reach you",
+        "address",
+        "write to you",
+        "how can i reach",
+        "how can i contact",
+        "adresse",
+        "contactez",
+        "telefone",
+        "telephone",
+        "imeri",
+        "nimero",
+        "aho mubarizwa",
+    )
+    return any(term in compact for term in contact_terms)
+
+
+def _extract_contact_details(text):
+    cleaned = process_text_for_whatsapp(text)
+    emails = []
+    for email in re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", cleaned):
+        if email not in emails:
+            emails.append(email)
+
+    phones = []
+    phone_pattern = (
+        r"(?:Phone|Call us|Tel|Telephone):?\s*"
+        r"([+0-9][0-9\s().-]*?)"
+        r"(?=\s+(?:\d+\s+K[Nn]\s+\d+\s+St|Call us|Write to us|Email|Address|Kabisa EV House)|$)"
+    )
+    for phone in re.findall(phone_pattern, cleaned, re.IGNORECASE):
+        phone = " ".join(phone.split()).strip(" .")
+        if phone and phone not in phones:
+            phones.append(phone)
+
+    addresses = []
+    for address in re.findall(r"\b\d+\s+K[Nn]\s+\d+\s+St(?:reet)?[^.]*?Kigali,\s*Rwanda", cleaned):
+        address = " ".join(address.split())
+        if address not in addresses:
+            addresses.append(address)
+
+    return {"emails": emails, "phones": phones, "addresses": addresses}
+
+
+def _format_contact_details(pages):
+    details = {"emails": [], "phones": [], "addresses": []}
+    saw_protected_email = False
+    for page in pages:
+        saw_protected_email = saw_protected_email or "[email protected]" in page.get("text", "")
+        extracted = _extract_contact_details(page.get("text", ""))
+        for key, values in extracted.items():
+            for value in values:
+                if value not in details[key]:
+                    details[key].append(value)
+
+    if not details["emails"] and saw_protected_email and has_app_context():
+        configured_email = current_app.config.get("KABISA_CONTACT_EMAIL")
+        if configured_email:
+            details["emails"].append(configured_email)
+
+    lines = ["Kabisa contact details:"]
+    if details["emails"]:
+        lines.append(f"* Email: {details['emails'][0]}")
+    if details["phones"]:
+        lines.append(f"* Phone: {details['phones'][0]}")
+    if details["addresses"]:
+        lines.append(f"* Address: {details['addresses'][0]}")
+
+    if len(lines) == 1:
+        return ""
+    return process_text_for_whatsapp("\n".join(lines))
+
+
 def _vehicle_field(text, label):
     match = re.search(rf"{re.escape(label)}:\s*([^:]+?)(?=\s+[A-Z][A-Za-z ]+:|$)", text)
     return match.group(1).strip() if match else ""
@@ -218,6 +309,48 @@ def _format_available_vehicles(vehicles):
             lines.append(f"  * More details: {source_url}")
 
     return "\n".join(lines)
+
+
+def _vehicle_image_url(vehicle):
+    metadata = vehicle.get("metadata", {})
+    if metadata.get("image_url"):
+        return metadata["image_url"]
+    image_urls = metadata.get("image_urls") or []
+    return image_urls[0] if image_urls else None
+
+
+def _vehicle_name(vehicle):
+    text = vehicle.get("text", "")
+    return (text.split(" Trim:", 1)[0] or "Vehicle").strip()
+
+
+def _format_vehicle_caption(vehicle):
+    metadata = vehicle.get("metadata", {})
+    text = vehicle.get("text", "")
+    name = _vehicle_name(vehicle)
+    classification = metadata.get("classification") or _vehicle_field(text, "Classification")
+    vehicle_type = _format_vehicle_type(classification) if classification else "Vehicle"
+    range_km = _vehicle_field(text, "Range")
+    battery = _vehicle_field(text, "Battery capacity")
+    price = metadata.get("price") or _vehicle_field(text, "Price")
+    currency = metadata.get("currency")
+    source_url = metadata.get("source_url")
+
+    lines = [f"*{name}* ({vehicle_type})"]
+    if range_km:
+        lines.append(f"Range: {range_km}")
+    if battery:
+        lines.append(f"Battery: {battery}")
+    if price:
+        price_text = f"{price} {currency}".strip() if currency and str(currency) not in str(price) else str(price)
+        lines.append(f"Price: {price_text}")
+    if source_url:
+        lines.append(f"Details: {source_url}")
+
+    caption = process_text_for_whatsapp("\n".join(lines))
+    if len(caption) <= MAX_VEHICLE_CAPTION_LENGTH:
+        return caption
+    return caption[: MAX_VEHICLE_CAPTION_LENGTH - 3].rstrip() + "..."
 
 
 def _format_charging_stations(chargers):
@@ -255,12 +388,9 @@ def _format_vehicle_type(classification):
 
 def _best_image_url(results):
     for result in results:
-        metadata = result.get("metadata", {})
-        if metadata.get("image_url"):
-            return metadata["image_url"]
-        image_urls = metadata.get("image_urls") or []
-        if image_urls:
-            return image_urls[0]
+        image_url = _vehicle_image_url(result)
+        if image_url:
+            return image_url
     return None
 
 
@@ -368,6 +498,33 @@ def _has_relevant_context(results):
     return True
 
 
+def _send_available_vehicle_gallery(wa_id, vehicles):
+    send_text_message(
+        wa_id,
+        process_text_for_whatsapp(
+            "Based on Kabisa's available information, here are the models you can buy:"
+        ),
+    )
+
+    fallback_lines = []
+    first_image_url = None
+    for vehicle in vehicles:
+        caption = _format_vehicle_caption(vehicle)
+        image_url = _vehicle_image_url(vehicle)
+        if image_url:
+            if first_image_url is None:
+                first_image_url = image_url
+            send_image_message(wa_id, image_url, caption=caption)
+        else:
+            fallback_lines.append(caption)
+
+    if fallback_lines:
+        send_text_message(wa_id, "\n\n".join(fallback_lines))
+
+    if first_image_url:
+        LAST_IMAGE_BY_USER[wa_id] = first_image_url
+
+
 def process_whatsapp_message(body):
     wa_id = body["entry"][0]["changes"][0]["value"]["contacts"][0]["wa_id"]
     name = body["entry"][0]["changes"][0]["value"]["contacts"][0]["profile"]["name"]
@@ -386,19 +543,20 @@ def process_whatsapp_message(body):
         send_text_message(wa_id, simple_response)
         return
 
+    if _asks_contact_details(message_body):
+        contact_response = _format_contact_details(list_contact_pages())
+        if contact_response:
+            send_text_message(wa_id, contact_response)
+            return
+        logging.warning("Contact intent detected, but no contact details were extracted")
+
     if _asks_available_vehicles(message_body):
         vehicles = list_available_vehicles()
         if not vehicles:
             send_text_message(wa_id, FALLBACK_RESPONSE)
             return
 
-        image_url = _best_image_url(vehicles)
-        if image_url:
-            LAST_IMAGE_BY_USER[wa_id] = image_url
-
-        send_text_message(wa_id, process_text_for_whatsapp(_format_available_vehicles(vehicles)))
-        if image_url:
-            send_image_message(wa_id, image_url)
+        _send_available_vehicle_gallery(wa_id, vehicles)
         return
 
     if _asks_charging_stations(message_body):

@@ -54,7 +54,7 @@ python run.py
 Expose the webhook with ngrok on the same port:
 
 ```bash
-ngrok http 8000 --domain your-domain.ngrok-free.dev
+ngrok http --url=overpay-drab-series.ngrok-free.dev 8000
 ```
 
 Access Qdrant:
